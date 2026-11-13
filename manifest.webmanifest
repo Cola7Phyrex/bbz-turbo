@@ -1,0 +1,10 @@
+{
+  "name": "Mega Gather & Blust: Turbo",
+  "short_name": "MGB Turbo",
+  "start_url": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0d1c22",
+  "theme_color": "#0d1c22",
+  "icons": [{"src":"icon.svg", "sizes":"any", "type":"image/svg+xml", "purpose":"any"}]
+}

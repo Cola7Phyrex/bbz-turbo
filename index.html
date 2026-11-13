@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+  <meta name="theme-color" content="#0b1620">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <link rel="manifest" href="manifest.webmanifest">
+  <title>Mega Gather & Blust: Turbo</title>
+  <style>
+    *{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;overscroll-behavior:none;background:#0b1620;color:#eef2ed;font-family:system-ui,sans-serif;touch-action:none;-webkit-user-select:none;user-select:none}
+    #game{position:fixed;inset:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+    #canvas{display:block;width:100%;height:100%;outline:none}
+    .overlay{position:fixed;inset:0;background:#0b1620;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;z-index:3;padding:24px;text-align:center}
+    .brand{font-size:14px;letter-spacing:2px;color:#a7b8c8}.title{font-size:42px;letter-spacing:8px;color:#ffb253;font-weight:650}p{margin:0;font-size:15px;color:#a7b8c8}
+    button{font:inherit;cursor:pointer;border:1px solid #617889;border-radius:0;clip-path:polygon(8px 0,100% 0,100% calc(100% - 8px),calc(100% - 8px) 100%,0 100%,0 8px);color:#eef2ed;background:#142332;padding:14px 36px;touch-action:manipulation}button:disabled{opacity:.5;cursor:wait}button:active{background:#344757}
+    progress{width:min(300px,70vw);height:8px;accent-color:#ffb253}
+    #fullscreen{position:fixed;right:calc(env(safe-area-inset-right) + 8px);bottom:calc(env(safe-area-inset-bottom) + 2px);font-size:11px;padding:3px 10px;background:#0b1620b0;border-color:#617889;z-index:2}
+    [hidden]{display:none!important}
+  </style>
+  
+</head>
+<body>
+  <div id="game"><canvas id="canvas" tabindex="0">浏览器需要支持 WebGL 2。</canvas></div>
+  <div id="loading" class="overlay">
+    <span class="brand">MEGA GATHER &amp; BLUST</span><span class="title">TURBO</span>
+    <progress id="progress"></progress><p id="message">正在加载</p>
+    <button id="enter" disabled>进入游戏</button>
+  </div>
+  <button id="fullscreen" aria-label="切换全屏">全屏</button>
+  <noscript>请开启 JavaScript 后游玩。</noscript>
+  <script src="index.js"></script>
+  <script>
+    // The compressed engine keeps the mobile download small and fits static hosting limits.
+    const nativeFetch = window.fetch.bind(window);
+    window.fetch = async (input, options) => {
+      const url = typeof input === 'string' ? input : input.url;
+      if (new URL(url, location.href).pathname.endsWith('/index.wasm')) {
+        const response = await nativeFetch('index.wasm.gz', options);
+        if (!response.ok) throw new Error('引擎下载失败，请刷新重试');
+        return new Response(response.body.pipeThrough(new DecompressionStream('gzip')), {headers:{'Content-Type':'application/wasm'}});
+      }
+      if (new URL(url, location.href).pathname.endsWith('/index.pck')) {
+        const size = config.fileSizes['index.pck'];
+        const count = Math.ceil(size / (16 * 1024 * 1024));
+        const responses = await Promise.all(Array.from({length:count}, (_, i) => nativeFetch(`index.pck.part${i}`, options)));
+        if (responses.some(response => !response.ok)) throw new Error('游戏资源下载失败，请刷新重试');
+        const readers = responses.map(response => response.body.getReader());
+        let index = 0;
+        const stream = new ReadableStream({
+          async pull(controller) {
+            while (index < readers.length) {
+              const chunk = await readers[index].read();
+              if (chunk.done) { index++; continue; }
+              controller.enqueue(chunk.value);
+              return;
+            }
+            controller.close();
+          },
+          cancel(reason) { return Promise.all(readers.map(reader => reader.cancel(reason))); }
+        });
+        return new Response(stream, {headers:{'Content-Type':'application/octet-stream', 'Content-Length':String(size)}});
+      }
+      return nativeFetch(input, options);
+    };
+    const config = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":true,"executable":"index","experimentalVK":false,"fileSizes":{"index.pck":31570744,"index.wasm":39514754},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4};
+    const engine = new Engine(config);
+    const message = document.getElementById('message');
+    const progress = document.getElementById('progress');
+    const enter = document.getElementById('enter');
+    const canvas = document.getElementById('canvas');
+    const coarse = matchMedia('(pointer:coarse)');
+    function suspendWhenNeeded(){
+      if (document.hidden) window.turboSuspend?.();
+    }
+    document.addEventListener('visibilitychange', suspendWhenNeeded);
+    window.addEventListener('resize', suspendWhenNeeded);
+    canvas.addEventListener('contextmenu', event => event.preventDefault());
+    async function fullscreen(){
+      try {
+        if (document.fullscreenElement) await document.exitFullscreen();
+        else if (document.documentElement.requestFullscreen) {
+          await document.documentElement.requestFullscreen();
+        }
+      } catch (_) { /* Fullscreen is optional on browsers without support. */ }
+    }
+    document.getElementById('fullscreen').addEventListener('click', fullscreen);
+    enter.addEventListener('click', () => {
+      document.getElementById('loading').hidden = true;
+      canvas.focus();
+    });
+    async function boot(){
+      if (!('DecompressionStream' in window)) throw new Error('请使用较新版本的手机浏览器');
+      const missing = Engine.getMissingFeatures({threads:false});
+      if (missing.length) throw new Error('浏览器不支持 WebGL 2 或 WebAssembly');
+      await engine.startGame({onProgress(current,total){
+        if(total>0){progress.max=total;progress.value=current;}
+      }});
+      progress.hidden=true; message.textContent='波波攒 · 威力加强版'; enter.disabled=false;
+    }
+    boot().catch(error=>{progress.hidden=true;message.textContent=error.message;console.error(error);});
+  </script>
+</body>
+</html>
+
